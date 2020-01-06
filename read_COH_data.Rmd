@@ -1,0 +1,59 @@
+---
+title: "Read COH data"
+author: "Alan Jackson"
+date: "January 5, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+
+path <- "/home/ajackson/Rprojects/Geocoding/"
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Read in csv file
+
+```{r read in file}
+
+DF <- read_csv(paste0(path, "COH_ADDRESS_POINTS__PDD.csv"),
+               col_types = "dddddcccccccccccddccccccccccccccc")
+
+```
+
+##  Do some cleanup and recast some variables
+
+a handful of zipcodes end in *
+several addresses contain a letter at the end like "B"
+etc
+
+```{r cleanup}
+
+check_num <- function(name_a, a){paste("Range", name_a, toString(range(a, na.rm=TRUE), sep=", "), "number of NA's", sum(is.na(a)))}
+
+check_char <- function(name_a, a){print(paste("Variable:", name_a))
+  head(unique(a), 25)}
+
+check_notnum <- function(name_a, a){print(paste("Variable:", name_a, "non-numerics =", length(a[grepl("\\D",a)])))
+  head(a[grepl("\\D",a)])
+  }
+
+check_num("X", DF$X)
+check_num("Y", DF$Y)
+check_num("OBJECTID", DF$OBJECTID)
+check_num("ID", DF$ID)
+check_num("ADDR_ID", DF$ADDR_ID)
+
+check_char("TYPES", DF$TYPES)
+check_char("STATUS", DF$STATUS)
+check_char("STREET_NUM", DF$STREET_NUM)
+check_notnum("STREET_NUM", DF$STREET_NUM)
+
+check_char("FRACTION", DF$FRACTION)
+check_char("PREFIX", DF$PREFIX)
+
+```
+
+

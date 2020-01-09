@@ -29,31 +29,211 @@ a handful of zipcodes end in *
 several addresses contain a letter at the end like "B"
 etc
 
-```{r cleanup}
+```{r look at data}
 
 check_num <- function(name_a, a){paste("Range", name_a, toString(range(a, na.rm=TRUE), sep=", "), "number of NA's", sum(is.na(a)))}
 
 check_char <- function(name_a, a){print(paste("Variable:", name_a))
-  head(unique(a), 25)}
+  print(head(unique(a), 25))
+  print(paste("Number of NA's:", sum(is.na(a))))
+  print(paste("Number Unique:", length(unique(a))))}
 
 check_notnum <- function(name_a, a){print(paste("Variable:", name_a, "non-numerics =", length(a[grepl("\\D",a)])))
   head(a[grepl("\\D",a)])
   }
 
 check_num("X", DF$X)
+print("-----------------------")
 check_num("Y", DF$Y)
+print("-----------------------")
 check_num("OBJECTID", DF$OBJECTID)
+print("-----------------------")
 check_num("ID", DF$ID)
+print("-----------------------")
 check_num("ADDR_ID", DF$ADDR_ID)
+print("-----------------------")
 
 check_char("TYPES", DF$TYPES)
+print("-----------------------")
 check_char("STATUS", DF$STATUS)
+print("-----------------------")
 check_char("STREET_NUM", DF$STREET_NUM)
 check_notnum("STREET_NUM", DF$STREET_NUM)
+print("-----------------------")
 
 check_char("FRACTION", DF$FRACTION)
+print("-----------------------")
 check_char("PREFIX", DF$PREFIX)
+print("-----------------------")
+check_char("STREET_NAME", DF$STREET_NAME)
+print("-----------------------")
+check_char("SUFFIX", DF$SUFFIX)
+print("-----------------------")
+check_char("STREET_TYPE", DF$STREET_TYPE)
+print("-----------------------")
+check_char("STATE", DF$STATE)
+print("-----------------------")
+check_char("CITY", DF$CITY)
+print("-----------------------")
+check_char("ZIPCODE", DF$ZIPCODE)
+check_notnum("ZIPCODE", DF$ZIPCODE)
+print("-----------------------")
+check_num("X_COORD", DF$X_COORD)
+print("-----------------------")
+check_num("Y_COORD", DF$Y_COORD)
+print("-----------------------")
+check_char("LOT", DF$LOT)
+print("-----------------------")
+check_char("BLOCK", DF$BLOCK)
+print("-----------------------")
+check_char("SOURCES", DF$SOURCES)
+print("-----------------------")
 
 ```
 
+## Data Observations
+
+X and Y seem more reliable than X_COORD and Y_COORD. The range is correct, and there are no NA's. But do they differ?
+
+OBJECTID looks good - the range more than covers the number of records, and no NA's. Are they unique?
+
+ID has lots of NA's. Not sure what it is for.
+
+Not sure what ADDR_ID is, but no NA's.
+
+TYPES possibly useful, but largely NA dominated. 90% NA.
+
+STATUS seems important, no NA's. Need to figure out what it means.
+
+STREET_NUM has only 1 NA (good!), but almost 10,000 entries with an appended character string like "A" or "#1".
+
+FRACTION is all over the map. Probably not useful.
+
+PREFIX has issues. Case problems, and what is "C"?
+
+STREET_NAME is good - no NA's.
+
+SUFFIX is okay except for "Y" and "w".
+
+STREET_TYPE is a problem. Too many. 109 street types? Really?
+
+STATE has one NA. Seriously?
+
+CITY has a lot of entries - 46! But only 2 NA's.
+
+ZIPCODE: no NA's but 14 "7737*".
+
+X_COORD, Y_COORD range wrong, needs further checking.
+
+LOT don't know what it is, but doesn't look useful, to me.
+
+BLOCK is NA about half the time, but appears to designate blocks when present.
+
+SOURCES nearly always present, but not sure how I would use it.
+
+Rest of the fields are internal things like date updated, who did the update, etc.
+
+##  Data cleanup
+
+Let's now go through and clean up the data. I'll just delete records which are unrecoverable (bad zipcode, street number NA, street number not a number? )
+
+Also look at other issues that the summaries uncovered.
+
+```{r cleaning one}
+
+# drop fields I don't care about
+
+DF_work <- DF %>% select(X, Y, OBJECTID, TYPES, STATUS,
+                         STREET_NUM, PREFIX, STREET_NAME,
+                         SUFFIX, STREET_TYPE, CITY,
+                         ZIPCODE, X_COORD, Y_COORD, BLOCK)
+
+# eliminate City, Street_number with NA
+
+DF_work <- DF_work %>% filter(CITY!="NA", STREET_NUM!="NA")
+
+# eliminate non-numeric zips
+
+DF_work <- DF_work %>% filter(!grepl("\\D", ZIPCODE))
+
+
+```
+
+##  Look at coordinates
+
+Let's look at X,Y vs X_COORD and Y_COORD. How different are they?
+
+```{r Coordinatefest}
+
+DF_work <- 
+  DF_work %>% 
+  filter(!is.na(X_COORD), !is.na(Y_COORD)) 
+  
+  DF_work %>% 
+  mutate(xdiff=X-X_COORD, ydiff=Y-Y_COORD) %>% 
+  select(X, Y, xdiff, ydiff) %>% 
+  ggplot() +
+    geom_histogram(aes(x = xdiff), fill = "red", alpha = 0.2) + 
+    geom_histogram(aes(x = ydiff), fill = "blue", alpha = 0.2) 
+
+  DF_work %>% 
+  ggplot() +
+    geom_histogram(aes(x = X_COORD), fill = "red", alpha = 0.2) + 
+    geom_histogram(aes(x = Y_COORD), fill = "blue", alpha = 0.2) 
+```
+
+I see. X_COORD and Y_COORD are actual projected X,Y values, probably Lambert, while X,Y are actually lat, long values. I'll keep the projected coordinates for now. But delete the NA's.
+
+## Objectid - unique?
+
+```{r objectid}
+
+n_distinct(DF_work$OBJECTID)
+nrow(DF_work)
+
+```
+
+Yep. Unique. A very useful field.
+
+## Status
+
+Let's count up each status
+
+```{r status counts}
+
+DF_work %>% group_by(STATUS) %>% tally(sort=TRUE)
+
+```
+
+What do they mean?
+
+COH Permanent, Center Point, and County are all good addresses. PRE means preliminary - probably will be made one of the first three, later. Abandon means used to be a valid address, but no longer is. For example, 2050 Main might have the building razed and replaced with two now at 2050A and 2050B. 2050 gets abandoned.
+
+UTA - no clue. Seems to be valid, but not tied to a particular structure.
+
+Reverse Geocode - Not sure, suspect it means "interpolated address".
+
+Out of Range - really means out of sequence, e.g., 5,7,4,9 4 would be out of range. Drop these if doing any interpolation!
+
+## STREET_NUM
+
+What to do about those annoying extras added to the street numbers, like "A" or "#5"? Since my ultimate goal is to geocode by block range,
+all I need to calculate is the block range, and something approximating
+the center of the block. Should I use the average location, the median, or perhaps the midpoint between the min and max? I think initially I might calculate all three and compare, just to see how they each work. For all of these, I can drop the non-numeric and it will affect nothing. So that seems to be the answer.
+
+```{r cleanup street number}
+
+# remove anything following numerics that start with a non-numeric
+
+DF_work %>% mutate(STREET_NUM=str_extract(STREET_NUM, "^\\d+")) -> 
+  DF_work
+
+check_char("STREET_NUM", DF_work$STREET_NUM)
+check_notnum("STREET_NUM", DF_work$STREET_NUM)
+
+# Make STREET_NUM numeric to ease later calculations
+
+DF_work$STREET_NUM <- as.numeric(DF_work$STREET_NUM)
+
+```
 

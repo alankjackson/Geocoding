@@ -225,15 +225,176 @@ the center of the block. Should I use the average location, the median, or perha
 
 # remove anything following numerics that start with a non-numeric
 
-DF_work %>% mutate(STREET_NUM=str_extract(STREET_NUM, "^\\d+")) -> 
+DF_work %>% mutate(STREET_NUMa=str_extract(STREET_NUM, "^\\d+")) -> 
   DF_work
 
-check_char("STREET_NUM", DF_work$STREET_NUM)
-check_notnum("STREET_NUM", DF_work$STREET_NUM)
+check_char("STREET_NUMa", DF_work$STREET_NUMa)
+check_notnum("STREET_NUMa", DF_work$STREET_NUMa)
 
-# Make STREET_NUM numeric to ease later calculations
+# Make STREET_NUMa numeric to ease later calculations
 
-DF_work$STREET_NUM <- as.numeric(DF_work$STREET_NUM)
+DF_work$STREET_NUMa <- as.numeric(DF_work$STREET_NUMa)
 
+```
+
+## PREFIX
+
+This should be N, S, E, W, but also has w, e, and C as values. Clearly I just need to uppercase w and e, but what is "C"? C should be NA. I looked at the map for that street.
+
+```{r prefix}
+
+DF_work %>% group_by(PREFIX) %>% tally(sort=TRUE)
+
+DF_work[grepl("w|e|C", DF_work$PREFIX),]
+
+DF_work %>% mutate(PREFIX=str_to_upper(PREFIX)) -> 
+  DF_work
+
+DF_work$PREFIX[grepl("C", DF_work$PREFIX)] <- NA
+
+```
+
+## STREET_NAME
+
+Just to be more comfortable, let's look at the street names that only occur once, or very few times.
+
+```{r street name}
+
+DF_work %>% group_by(STREET_NAME) %>% 
+  tally(sort=TRUE) %>% 
+  filter(n==1)
+
+DF_work %>% group_by(STREET_NAME) %>% 
+  tally(sort=TRUE) %>% 
+  ggplot() +
+    geom_histogram(aes(x = log(n)), fill = "red")  
+  
+```
+
+Sigh. Many mispellings. As I feared. Does it matter? Maybe not. Some of the streets with 2 occurances are mispelled, some are not.
+
+If I treat them all as real, I will still only match the valid names. The bad names will just be noise and are unlikely to match. On the other hand, if I don't fix the names, I may as well delete them since they will contribute nothing. But how do I know all the singlets are misspelled? Some could be short streets with a single building on them.
+
+For now, I'll leave them.
+
+## SUFFIX
+
+N, S, E, W seem reasonable, but Y? and lower case "w".
+
+```{r suffix}
+
+DF_work %>% group_by(SUFFIX) %>% tally(sort=TRUE)
+
+DF_work[grepl("w|Y", DF_work$SUFFIX),]
+
+DF_work %>% mutate(PREFIX=str_to_upper(SUFFIX)) -> 
+  DF_work
+
+DF_work$SUFFIX[grepl("Y", DF_work$SUFFIX)] <- NA
+
+```
+
+## STREET_TYPE
+
+Way too many of these at 110, expect spelling and abbreviation errors.
+
+Many instances where the latter part of a name got slotted into the type, e.g. "creek". Move these instances to the street name, and then look for duplicates. Look at lat/long diff < .0005 = 170 feet.
+
+Actually, look for duplicate address/ first part of street name, and look at distances. Do this first.
+
+```{r street type}
+
+DF_work %>% 
+  group_by(STREET_TYPE) %>% 
+  tally(sort=TRUE) %>% 
+  arrange(STREET_TYPE)
+
+# Look for duplicates
+
+#DF_work %>% head(10000) %>% 
+#  mutate(test_addy=paste(STREET_NUM, word(STREET_NAME), STREET_TYPE)) %>% 
+#  group_by(test_addy) %>% 
+#  filter(n()>1)
+
+#   Erase value from STREET_TYPE and add to value to STREET_NAME
+
+from_to <- c("BLF", "BLUFF",
+             "BR", "BRANCH",
+             "BRG", "BRIDGE",
+             "BRKS", "BROOKS",
+             "CENTER", "CENTER",
+             "CLB", "CLUB",
+             "COR", "CORNER",
+             "CREEK", "CREEK",
+             "CROSSING", "CROSSING",
+             "CRST", "CREST",
+             "CTS", "COURTS",
+             "CYN", "CANYON",
+             "DL", "DALE",
+             "EST", "ESTATE",
+             "ESTS", "ESTATE",
+             "FALL", "FALL",
+             "FLD", "FIELD",
+             "FLS", "FALLS",
+             "FRK", "",
+             "FRST", "FOREST",
+             "FRY", "FERRY CROSSING",
+             "GARDEN", "GARDEN",
+             "GARDENS", "GARDENS",
+             "GLEN", "GLEN",
+             "GREEN", "GREEN",
+             "GROVE", "GROVE",
+             "GRVS", "GROVE",
+             "HBR", "HARBOR",
+             "HILL", "HILL",
+             "HLS", "HILLS",
+             "HOLW", "HOLLOW",
+             "INLT", "INLET",
+             "IS", "ISLAND",
+             "KNL", "KNOLL",
+             "KNLS", "KNOLLS",
+             "LK", "LAKE",
+             "LKS", "LAKES",
+             "LNDG", "LANDING",
+             "MDW", "MEADOW",
+             "MDWS", "MEADOWS",
+             "ML", "MILL",
+             "MLS", "MILLS",
+             "MT", "MT",
+             "MTN", "MOUNTAIN",
+             "PLNS", "PLAINS",
+             "PNE", "PINE",
+             "PNES", "PINES",
+             "PR", "PRAIRIE",
+             "PRT", "PORT",
+             "RIDGE", "RIDGE",
+             "RIV", "RIVER",
+             "RNCH", "RANCH",
+             "ROW", "ROW",
+             "RST", "REST",
+             "SHR", "SHORE",
+             "SHRS", "SHORES",
+             "SPG", "SPRING",
+             "SPWY", "SPEEDWAY",
+             "STATION", "STATION",
+             "STRM", "STREAM",
+             "VLG", "VILLAGE",
+             "VLY", "VALLEY",
+             "VW", "VIEW",
+             "WLS", "WELLS")
+
+#   Other errors to fix
+# Orchard dale CIRCLE
+# Lynette Falls DR
+# Bend LANDING (LDG)
+# Forest LODGE (LDG)
+# Hampton LODGE (LDG)
+# Indian LODGE (LDG)
+# RD -> ROAD
+# E MEYER E -> MEYER
+# TOLLWAY -> COURT
+# TS -> STREET
+# DE .. VL -> DEVILLE .. DR
+# MAGENTA SPRING .. WAYS -> EAGLES PERCH .. WAY
 ```
 

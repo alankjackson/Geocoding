@@ -252,6 +252,8 @@ DF_work %>% mutate(PREFIX=str_to_upper(PREFIX)) ->
 
 DF_work$PREFIX[grepl("C", DF_work$PREFIX)] <- NA
 
+DF_work %>% group_by(PREFIX) %>% tally(sort=TRUE)
+
 ```
 
 ## STREET_NAME
@@ -287,11 +289,14 @@ DF_work %>% group_by(SUFFIX) %>% tally(sort=TRUE)
 
 DF_work[grepl("w|Y", DF_work$SUFFIX),]
 
-DF_work %>% mutate(PREFIX=str_to_upper(SUFFIX)) -> 
+DF_work %>% mutate(SUFFIX=str_to_upper(SUFFIX)) -> 
   DF_work
 
 DF_work$SUFFIX[grepl("Y", DF_work$SUFFIX)] <- NA
 
+DF_work %>% group_by(SUFFIX) %>% tally(sort=TRUE)
+
+foo <- DF_work
 ```
 
 ## STREET_TYPE
@@ -301,6 +306,12 @@ Way too many of these at 110, expect spelling and abbreviation errors.
 Many instances where the latter part of a name got slotted into the type, e.g. "creek". Move these instances to the street name, and then look for duplicates. Look at lat/long diff < .0005 = 170 feet.
 
 Actually, look for duplicate address/ first part of street name, and look at distances. Do this first.
+
+OMG. I thought there was a 1:1 relationship between addresses and lat-long points, but for gated communities, they give every house in the community the same address. So for 12800 Briar Forest I have 186 records, each with a different lat-long, and, I think, each representing a different house. What to do?
+
+I'm tempted to take the single record with the smallest objectid, assuming that is the oldest. That is what I will do. HCAD has the units split out with unit nyumbers, but HPD only uses the Briar Forest block range, and the city permit database seems also to use only the broad address and not the unit number. Perhaps I should use the median or mean value location?
+
+Can I distinguish these from the actual duplicates? 
 
 ```{r street type}
 
@@ -320,8 +331,10 @@ DF_work %>%
 
 from_to <- c("BLF", "BLUFF",
              "BR", "BRANCH",
+             "BEND", "BEND",
              "BRG", "BRIDGE",
              "BRKS", "BROOKS",
+             "BROOK", "BROOK",
              "CENTER", "CENTER",
              "CLB", "CLUB",
              "COR", "CORNER",
@@ -349,6 +362,8 @@ from_to <- c("BLF", "BLUFF",
              "HILL", "HILL",
              "HLS", "HILLS",
              "HOLW", "HOLLOW",
+             "HTS", "HEIGHTS",
+             "HVN", "HAVEN",
              "INLT", "INLET",
              "IS", "ISLAND",
              "KNL", "KNOLL",
@@ -365,6 +380,7 @@ from_to <- c("BLF", "BLUFF",
              "PLNS", "PLAINS",
              "PNE", "PINE",
              "PNES", "PINES",
+             "POINT", "POINT",
              "PR", "PRAIRIE",
              "PRT", "PORT",
              "RIDGE", "RIDGE",
@@ -378,23 +394,137 @@ from_to <- c("BLF", "BLUFF",
              "SPWY", "SPEEDWAY",
              "STATION", "STATION",
              "STRM", "STREAM",
+             "TOLLWAY", "COURT",
              "VLG", "VILLAGE",
              "VLY", "VALLEY",
              "VW", "VIEW",
              "WLS", "WELLS")
 
+#     Create dictionary data frame of pattern/replacement
+Makedict <- function(dictionary) {
+  dict <- cbind.data.frame(split(dictionary, rep(1:2, times=length(dictionary)/2)), stringsAsFactors=F)
+  names(dict) <- c("From", "To")
+  return(dict)
+}
+
+dict <- Makedict(from_to)
+
+#   test the searches first to see what they will find
+testregex <- function(dframe, col, pat) { # input data frame and regex
+  for(i in 1:length(pat[,1])) {
+    print(paste("Pattern: ",pat[i,1]))
+    hits <- unique(dframe[[col]][grepl(paste0("^",pat[i,1],"$"),dframe[[col]])])
+    if (length(hits)>0){
+      print(paste("   Result: ", hits))
+    }
+    else {
+      print("No hits")
+    }
+  }
+}
+
+testregex(DF_work, "STREET_TYPE", dict)
+
+
+#   apply to input array
+applyregex <- function(dframe, col_from, pat, col_to) {
+  for(i in 1:length(pat[,1])) {
+    # if col_from == pat[i,1] &
+    #      pat[i,2] not found in dframe[[col_to]] then
+    #            append pat[i,2] to dframe[[col_to]]
+    #     set col_from to NA
+    #
+    #print(paste(dframe[[col_to]], i, pat[i,1], dframe[[col_from]],
+    #           pat[i,2], col_from, col_to))
+    #   what will happen if col_from = NA?????
+  dframe[[col_to]] <- if_else(pat[i,1]==dframe[[col_from]] &
+                              !str_detect(dframe[[col_to]], pat[i,2]), 
+                                  paste(dframe[[col_to]], pat[i,2]),
+                                  dframe[[col_to]],
+                                  missing=dframe[[col_to]])
+  
+  dframe[[col_from]][pat[i,1]==dframe[[col_from]]] <- "FIX ME"
+  }
+  return(dframe)
+}
+
+DF_work <- applyregex(DF_work, "STREET_TYPE", dict, "STREET_NAME")
+
 #   Other errors to fix
 # Orchard dale CIRCLE
+mask1 <- str_detect(DF_work$STREET_NAME, "ORCHARD DALE")
+mask2 <- DF_work$STREET_TYPE=="FIX ME"
+sum(mask1&mask2)
+DF_work$STREET_TYPE[mask1&mask2] <- "CIRCLE"
 # Lynette Falls DR
+mask1 <- str_detect(DF_work$STREET_NAME, "LYNETTE FALLS")
+mask2 <- DF_work$STREET_TYPE=="FIX ME"
+sum(mask1&mask2)
+DF_work$STREET_TYPE[mask1&mask2] <- "DRIVE"
 # Bend LANDING (LDG)
+mask1 <- str_detect(DF_work$STREET_NAME, "^BEND$")
+mask2 <- DF_work$STREET_TYPE=="LDG"
+sum(mask1&mask2)
+DF_work$STREET_NAME[mask1&mask2] <- "BEND LANDING"
+mask1 <- str_detect(DF_work$STREET_NAME, "^BEND LANDING$")
+sum(mask1)
+DF_work$STREET_TYPE[mask1] <- NA
 # Forest LODGE (LDG)
+mask1 <- str_detect(DF_work$STREET_NAME, "^FOREST$")
+mask2 <- str_detect(DF_work$STREET_TYPE, "^LDG$")
+sum(mask1&mask2, na.rm = TRUE)
+DF_work$STREET_NAME[mask1&mask2] <- "FOREST LODGE"
+DF_work$STREET_TYPE[mask1&mask2] <- "DRIVE"
 # Hampton LODGE (LDG)
+mask1 <- str_detect(DF_work$STREET_NAME, "^HAMPTON$")
+mask2 <- str_detect(DF_work$STREET_TYPE, "^LDG$")
+sum(mask1&mask2)
+DF_work$STREET_NAME[mask1&mask2] <- "HAMPTON LODGE"
+DF_work$STREET_TYPE[mask1&mask2] <- NA
 # Indian LODGE (LDG)
+mask1 <- str_detect(DF_work$STREET_NAME, "^INDIAN$")
+mask2 <- str_detect(DF_work$STREET_TYPE, "^LDG$")
+sum(mask1&mask2)
+DF_work$STREET_NAME[mask1&mask2] <- "INDIAN LODGE"
+DF_work$STREET_TYPE[mask1&mask2] <- "LANE"
 # RD -> ROAD
+mask2 <- str_detect(DF_work$STREET_TYPE, "^RD$")
+sum(mask2, na.rm = TRUE)
+DF_work$STREET_TYPE[mask2] <- "ROAD"
 # E MEYER E -> MEYER
-# TOLLWAY -> COURT
+mask1 <- str_detect(DF_work$STREET_NAME, "^MEYER$")
+mask2 <- str_detect(DF_work$PREFIX, "^E$")
+sum(mask1&mask2, na.rm = TRUE)
+DF_work$PREFIX[mask1&mask2] <- NA
+DF_work$SUFFIX[mask1&mask2] <- NA
 # TS -> STREET
+mask2 <- str_detect(DF_work$STREET_TYPE, "^TS$")
+sum(mask2, na.rm = TRUE)
+DF_work$STREET_TYPE[mask2] <- "STREET"
 # DE .. VL -> DEVILLE .. DR
+mask1 <- str_detect(DF_work$STREET_NAME, "^DE$")
+sum(mask1, na.rm = TRUE)
+DF_work$STREET_NAME[mask1] <- "DEVILLE"
+DF_work$STREET_TYPE[mask1] <- "DRIVE"
 # MAGENTA SPRING .. WAYS -> EAGLES PERCH .. WAY
+mask1 <- str_detect(DF_work$STREET_NAME, "^MAGENTA SPRING$")
+mask2 <- str_detect(DF_work$STREET_TYPE, "^WAYS$")
+sum(mask1&mask2)
+DF_work$STREET_NAME[mask1&mask2] <- "EAGLES PERCH"
+DF_work$STREET_TYPE[mask1&mask2] <- "WAY"
+
+# Now update the remaining "FIX ME" records
+
+#   First let's look at likely duplicates and see if there are patterns,
+#   especially regarding the STATUS
+
+DF_work %>% 
+  unite(groupaddress,STREET_NUM, PREFIX, STREET_NAME, SUFFIX, 
+        sep=" ", na.rm=TRUE) %>% 
+  group_by(groupaddress) %>% 
+  tally(sort=TRUE) %>% 
+  filter(n>1)
+  
+
 ```
 

@@ -8,8 +8,11 @@ output: html_document
 ```{r setup, include=FALSE}
 
 library(tidyverse)
+library(leaflet)
 
 path <- "/home/ajackson/Rprojects/Geocoding/"
+
+deg_to_ft <-  363633.62 # feet per degree at 29 degrees
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -129,7 +132,7 @@ LOT don't know what it is, but doesn't look useful, to me.
 
 BLOCK is NA about half the time, but appears to designate blocks when present.
 
-SOURCES nearly always present, but not sure how I would use it.
+SOURCES nearly always present, but not sure how I would use it. It may tell which duplicate address to use.
 
 Rest of the fields are internal things like date updated, who did the update, etc.
 
@@ -146,7 +149,7 @@ Also look at other issues that the summaries uncovered.
 DF_work <- DF %>% select(X, Y, OBJECTID, TYPES, STATUS,
                          STREET_NUM, PREFIX, STREET_NAME,
                          SUFFIX, STREET_TYPE, CITY,
-                         ZIPCODE, X_COORD, Y_COORD, BLOCK)
+                         ZIPCODE, X_COORD, Y_COORD, BLOCK, SOURCES)
 
 # eliminate City, Street_number with NA
 
@@ -513,18 +516,187 @@ sum(mask1&mask2)
 DF_work$STREET_NAME[mask1&mask2] <- "EAGLES PERCH"
 DF_work$STREET_TYPE[mask1&mask2] <- "WAY"
 
-# Now update the remaining "FIX ME" records
+# Now update the remaining "FIX ME" records, but first deal with duplicates
+
+```
+
+## Duplicates
+
+We interrupt this program to delve into the duplicate address issue.
+
+It looks like most of them are either gated communities, trailer parks, or business warehouse areas with multiple building numbers.
+
+But to really understand them, I need to see a map. So let's map them.
+
+Also look at mean, median, and relationship to SOURCE.
+
+
+```{r Duplicates}
 
 #   First let's look at likely duplicates and see if there are patterns,
 #   especially regarding the STATUS
 
 DF_work %>% 
-  unite(groupaddress,STREET_NUM, PREFIX, STREET_NAME, SUFFIX, 
+  filter(STREET_NAME=="SHEPHERD") %>% 
+  unite(groupaddress,STREET_NUMa, PREFIX, STREET_NAME, SUFFIX, CITY,
         sep=" ", na.rm=TRUE) %>% 
   group_by(groupaddress) %>% 
   tally(sort=TRUE) %>% 
   filter(n>1)
   
+# Split dups off into a separate file so that I can plot them and see what they look like.
+
+DF_work %>% 
+  unite(groupaddress,STREET_NUMa, PREFIX, STREET_NAME, SUFFIX, STREET_TYPE, CITY,ZIPCODE,
+        sep=" ", na.rm=TRUE, remove=FALSE) %>% 
+  filter(groupaddress %in% unique(.[["groupaddress"]][duplicated(.[["groupaddress"]])])) -> 
+           DF_dups
+
+# Create file of unique values, I'll add the cleaned dups back later
+
+DF_work %>% 
+  unite(groupaddress,STREET_NUMa, PREFIX, STREET_NAME, SUFFIX, STREET_TYPE, CITY,ZIPCODE,
+        sep=" ", na.rm=TRUE, remove=FALSE) %>%
+  group_by(groupaddress) %>% 
+  filter(n()==1) ->
+  DF_Unique
+
+DF_dups %>% group_by(SOURCES) %>% tally(sort=TRUE)
+
+# Create mean, median locations plus max diff
+
+lldiff <- function(df){
+  latmean <- mean(df$Y)
+  latmed <- median(df$Y)
+  print(paste("latmean", latmean))
+  lonmean <- mean(df$X)
+  lonmed <- median(df$X)
+  print(paste("lonmean", lonmean))
+  maxdiffmean <- deg_to_ft*(max(sqrt((df$Y-latmean)**2 + (df$X-lonmean)**2)))
+  maxdiffmed <- deg_to_ft*(max(sqrt((df$Y-latmed)**2 + (df$X-lonmed)**2)))
+  if (nrow(df)>2) {
+    maxindex <- which.max(deg_to_ft*(sqrt((df$Y-latmed)**2 + (df$X-lonmed)**2)))
+    mask <- !logical(length=nrow(df)) # set all TRUE
+    mask[maxindex] <- FALSE
+    latmean <- mean(df$Y[mask])
+    lonmean <- mean(df$X[mask])
+    trimdiffmean <- deg_to_ft*(max(sqrt((df$Y[mask]-latmean)**2 + (df$X[mask]-lonmean)**2)))
+    print(paste("-->",maxindex, mask, trimdiffmean))
+  }
+  else {trimdiffmean <- maxdiffmean}
+  #print(names(df))
+  #print(nrow(df))
+  print(paste("maxdiff", maxdiffmean, df$key[1]))
+  dfut <- data.frame(latmean, lonmean, latmed, lonmed, trimdiffmean, maxdiffmean, maxdiffmed, nrow(df))
+  colnames(dfut) <- c("LatMean","LonMean",
+                    "LatMed", "LonMed", "TrimDiffMean",
+                    "RadMean", "RadMed" , "NumVals")
+  return(dfut)
+}
+
+DF_dups %>% arrange(groupaddress) %>% 
+  mutate(key=groupaddress) %>%  
+  #head(10) %>% 
+  group_by(groupaddress) %>% 
+  group_modify(~ lldiff(.x)) -> Map_dups
+
+#   Let's make a map
+
+Map_dups %>% 
+  filter(RadMean>1000) %>% 
+  leaflet() %>% 
+    setView(lat=29.757831, lng=-95.362680, zoom=12) %>% 
+    addTiles() %>% 
+    addCircles(lng=~LonMed, lat=~LatMed, radius=~RadMed/3.2, fillColor = "red") %>% 
+    addCircles(lng=~LonMean, lat=~LatMean, radius=~RadMean/3.2, popup=~groupaddress) 
+
+BadDups <- Map_dups %>% 
+  filter(RadMean>500)
+
+#    test taking the nearest points for 3 or more dups and recalculate error
+
+
+
+```
+
+Looks like most dups are either legitimate (gated communities or warehouses), or contain one point off from the others. 
+
+For addresses with >= 3 points, throw out the point furthest from the rest and then take the mean location.
+
+For addresses with 2 points, we have some issues. Some streets are missing the prefix (N, S, E, W) like Wellington. The esay way out would be to just drop all points with 2 dups and large radius. For 1000 feet, there are only 40 of those.
+
+Let's test the reject algorithm and see what happens.
+
+I like the trimmed mean, so I will use that for dups with 3 or more points.
+
+Now lets pull out the dups of only 2 points, and plot up the distribution of the error.
+
+A cutoff of about 250 looks reasonable. Less than 250, take average. Greater than 250, delete. Or really, push off into an error dataframe for potentially later work. 
+
+```{r study dup pairs}
+
+Map_dups %>% 
+  filter(NumVals==2, RadMean<500) %>% 
+  ggplot() +
+      geom_histogram(aes(x = RadMean, fill = "red"))+
+      ggtitle("Error values less than 500")
+
+
+```
+
+```{r Clean up duplicates}
+
+# Calculate trimmed mean for 3 or more points
+# Calculate the mean for 2 points
+# If mean - pt > 250, then put into a special dataframe and delete from main
+# For other variables, I need a hierarchy. 
+
+llmean <- function(df){
+  latmean <- mean(df$Y)
+  lonmean <- mean(df$X)
+  maxdiffmean <- deg_to_ft*(max(sqrt((df$Y-latmean)**2 + (df$X-lonmean)**2)))
+  if (nrow(df)>2) { # trimmed mean
+    maxindex <- which.max(deg_to_ft*(sqrt((df$Y-latmean)**2 + (df$X-lonmean)**2)))
+    mask <- !logical(length=nrow(df)) # set all TRUE
+    mask[maxindex] <- FALSE
+    latmean <- mean(df$Y[mask])
+    lonmean <- mean(df$X[mask])
+    trimdiffmean <- deg_to_ft*(max(sqrt((df$Y[mask]-latmean)**2 + (df$X[mask]-lonmean)**2)))
+    #print(paste("-->",maxindex, mask, trimdiffmean))
+  }
+  else {trimdiffmean <- maxdiffmean}
+  X <- lonmean
+  Y <- latmean
+  sortorder <- c("COH Permanent Address", "County Address", "Abandon", 
+                 "PRE",  "Reverse Geocode", "UTA", 
+                 "Center Point Address", "Out Of Range")
+  # choose based on STATUS in this order, largest OBJECTID next
+  # Note: Center Point is the local utility, gas and electric provider
+  # COH Permanent Address	1245257		
+  # County Address	32581		
+  # Abandon	4744		
+  # PRE	5176		
+  # Reverse Geocode	2529		
+  # UTA	3227		
+  # Center Point Address	153064		
+  # Out Of Range
+  rec <- df %>% 
+    arrange(match(STATUS, sortorder), desc(OBJECTID))
+  return(rec[1,])
+}
+
+# Duptest <- DF_dups %>% filter(groupaddress %in% c("12800 BRIAR FOREST DRIVE HOUSTON 77077","1803 W CLAY STREET HOUSTON 77019"))
+
+DF_dups %>% arrange(groupaddress) %>% 
+  mutate(key=groupaddress) %>%  
+  group_by(groupaddress) %>% 
+  group_modify(~ llmean(.x)) -> Duptest
+
+# Add Duptest back to DF_Unique to creat a new, duplicate-free dataset.
+
+DF_work <- bind_rows(DF_Unique, Duptest) %>% select(-key)
+
+
 
 ```
 

@@ -210,7 +210,7 @@ DF_work %>% group_by(STATUS) %>% tally(sort=TRUE)
 
 What do they mean?
 
-COH Permanent, Center Point, and County are all good addresses. PRE means preliminary - probably will be made one of the first three, later. Abandon means used to be a valid address, but no longer is. For example, 2050 Main might have the building razed and replaced with two now at 2050A and 2050B. 2050 gets abandoned.
+COH Permanent, Center Point, and County are all good addresses. Maybe, Center Point is the power and gas company, and there addresses seem more often damaged or weird than the others. PRE means preliminary - probably will be made one of the first three, later. Abandon means used to be a valid address, but no longer is. For example, 2050 Main might have the building razed and replaced with two now at 2050A and 2050B. 2050 gets abandoned.
 
 UTA - no clue. Seems to be valid, but not tied to a particular structure.
 
@@ -595,7 +595,7 @@ lldiff <- function(df){
 }
 
 DF_dups %>% arrange(groupaddress) %>% 
-  mutate(key=groupaddress) %>%  
+  #mutate(key=groupaddress) %>%  
   #head(10) %>% 
   group_by(groupaddress) %>% 
   group_modify(~ lldiff(.x)) -> Map_dups
@@ -688,15 +688,194 @@ llmean <- function(df){
 # Duptest <- DF_dups %>% filter(groupaddress %in% c("12800 BRIAR FOREST DRIVE HOUSTON 77077","1803 W CLAY STREET HOUSTON 77019"))
 
 DF_dups %>% arrange(groupaddress) %>% 
-  mutate(key=groupaddress) %>%  
+#  mutate(key=groupaddress) %>%  
   group_by(groupaddress) %>% 
   group_modify(~ llmean(.x)) -> Duptest
 
 # Add Duptest back to DF_Unique to creat a new, duplicate-free dataset.
 
-DF_work <- bind_rows(DF_Unique, Duptest) %>% select(-key)
+#DF_work <- bind_rows(DF_Unique, Duptest) %>% select(-key)
+DF_work <- bind_rows(DF_Unique, Duptest)
+
+```
+
+## Fix me records
+
+Okay, duplicate records are taken care of, now to the "FIX ME" records, all 9477 of them.
+
+First let's clear out the noise. If all streets of a given STREET_NAME say "FIX ME", then just blank out the "FIX ME".
+
+```{r uncontested fix me}
+
+DF_work %>% 
+  group_by(STREET_NAME) %>% 
+  mutate(STREET_TYPE = case_when(
+    all(STREET_TYPE == "FIX ME") ~ "",
+    TRUE ~ STREET_TYPE
+  )) %>%
+  ungroup() -> DF_work
+
+#   Fix PITA NA in type field
+
+DF_work$STREET_TYPE[is.na(DF_work$STREET_TYPE)] <- ""
+```
+
+##  Zipcode
+
+Before going further, there are some addresses with incorrect zipcodes. These
+will play havoc with the rest of the cleanup, so let's go after those now.
+
+```{r clean zip}
 
 
 
+
+
+```
+
+
+
+Intersect points with zipcode map to look for errors in the zip code.
+
+
+Now what to do about streets that have a mix of "FIX ME" and other records?
+
+Will need to look at several items to decide the proper course. STREET_NUMa should be in similar range, PREFIX and SUFFIX should match. CITY and ZIP hopefully will match. Let's start strictly and then see what is left.
+
+Group by prefix, suffix, name, and zip. If address in range, then recode.
+
+```{r strict recoding}
+
+whattype <- function(type, num){
+  #  If more than 2 types, bail
+  if (n_distinct(type)>2) {return(type)}
+  #  If only one type, bail
+  if (n_distinct(type)==1) {return(type)}
+  # If outside range of addresses, and not near, bail
+  arange <- range(num[type!="FIX ME"]) # good address range
+  fadd <- num[type=="FIX ME"] # FIX ME addresses
+  # what is new type?
+  #print(paste("arange", arange, "fadd", fadd))
+  
+  newtype <- type[type!="FIX ME"][1]
+  if (between(fadd, arange[1], arange[2])){
+    return(newtype)
+  }
+  else {return("FIX ME")}
+  #return(newtype)
+}
+
+testme <- tribble(
+  ~grp, ~type,  ~num,
+  "a", "DRIVE", 100,
+  "a", "FIX ME", 120,
+  "a", "FIX ME", 130,
+  "a", "FIX ME", 160,
+  "a", "FIX ME", 90,
+  "a", "DRIVE", 150,
+  "b", "LANE", 150
+)
+testme %>% 
+  group_by(grp) %>% 
+  mutate(answer = case_when(
+         sum(str_count(type,"FIX ME"))>0 ~ whattype(type, num),
+         TRUE ~ type
+  )) %>%
+  ungroup()
+
+testme %>% 
+    group_by(grp) %>%
+    mutate(in_range=if_else(between(num,
+                               min(num[type!="FIX ME"]),
+                               max(num[type!="FIX ME"])),
+                          type[type!="FIX ME"][1], type
+                          )) %>%  # is it in range? 
+    ungroup() 
+
+
+mymax <- function(...,def='hello world',na.rm=FALSE){
+    if(!is.infinite(x<-suppressWarnings(max(...,na.rm=na.rm)))) x else def}
+mymin <- function(...,def='hello world',na.rm=FALSE){
+    if(!is.infinite(x<-suppressWarnings(min(...,na.rm=na.rm)))) x else def}
+
+DF_work %>% 
+  #head(20000) %>% 
+  #select(-c(OBJECTID, TYPES, X_COORD, Y_COORD, BLOCK)) %>% 
+  unite(grouper, PREFIX, STREET_NAME, SUFFIX, CITY,ZIPCODE,
+        sep=" ", na.rm=TRUE, remove=FALSE) %>%
+  group_by(grouper) %>% 
+  mutate(STREET_TYPE2 = case_when(
+      between(STREET_NUMa, mymin(STREET_NUMa[STREET_TYPE!="FIX ME"],def=0)-50,
+                          mymax(STREET_NUMa[STREET_TYPE!="FIX ME"],def=0)+50)
+              ~ STREET_TYPE[STREET_TYPE!="FIX ME"][1],
+         TRUE ~ STREET_TYPE
+  )) %>%
+  ungroup() -> eraseme
+
+```
+
+
+
+```{r reprex}
+
+#   If all values of key are bad, set value to blank, otherwise leave alone
+reprexdata <- tribble(
+  ~key, ~value,
+  "a" , "good",
+  "a" , "bad",
+  "a" , "good",
+  "b" , "bad",
+  "b" , "bad",
+  "b" , "bad",
+  "c" , "good",
+  "c" , "good",
+  "c" , "good",
+  "d" , "good",
+  "d" , NA,
+  "d" , "good"
+)
+
+# This fails because it clobbers the bad value for key=="a" with ifelse, or
+# refuses to run using if_else
+reprexdata %>% group_by(key) %>% 
+  group_modify(~ {.x %>% mutate(
+    value=if_else(nrow(.x)==sum(value=="bad", na.rm=TRUE), 
+                 "", 
+                 value))})
+
+# This works, but seems a bit inelegant
+reprexdata %>% group_by(key) %>% 
+   group_modify(~ {.x %>% mutate(Number=nrow(.x), 
+                                 Numbad=sum(value=="bad"))}) %>% 
+  mutate(value=if_else(Number==Numbad, 
+                      "", 
+                      value)) %>% 
+  select(-c(Number, Numbad))
+
+reprexdata %>% 
+  group_by(key) %>% 
+  mutate(value = case_when(
+    all(value == "bad") ~ "",
+    TRUE ~ value
+  )) %>%
+  ungroup()
+
+whattype <- function(type){
+  #  If more than 2 types, bail
+  if (n_distinct(type)>2) {return(type)}
+  #  If only one type, bail
+  if (n_distinct(type)==1) {return(type)}
+  # what is new type?
+  newtype <- type[type!="FIX ME"][1]
+  return(newtype)
+}
+
+reprexdata %>% 
+  group_by(key) %>% 
+  mutate(newval = case_when(
+         sum(str_count(value,"bad"))>0 ~ "foobar",
+         TRUE ~ value
+  )) %>%
+  ungroup() 
 ```
 

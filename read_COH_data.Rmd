@@ -9,10 +9,17 @@ output: html_document
 
 library(tidyverse)
 library(leaflet)
+library(rgeos)
+library(sf)
 
 path <- "/home/ajackson/Rprojects/Geocoding/"
 
 deg_to_ft <-  363633.62 # feet per degree at 29 degrees
+
+googlecrs <- 4326
+
+googleproj4 <- "+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs"
+
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -518,6 +525,9 @@ DF_work$STREET_TYPE[mask1&mask2] <- "WAY"
 
 # Now update the remaining "FIX ME" records, but first deal with duplicates
 
+#   Save for easy restart
+saveRDS(DF_work, paste(path, "In_Progress"))
+
 ```
 
 ## Duplicates
@@ -568,10 +578,10 @@ DF_dups %>% group_by(SOURCES) %>% tally(sort=TRUE)
 lldiff <- function(df){
   latmean <- mean(df$Y)
   latmed <- median(df$Y)
-  print(paste("latmean", latmean))
+  #print(paste("latmean", latmean))
   lonmean <- mean(df$X)
   lonmed <- median(df$X)
-  print(paste("lonmean", lonmean))
+  #print(paste("lonmean", lonmean))
   maxdiffmean <- deg_to_ft*(max(sqrt((df$Y-latmean)**2 + (df$X-lonmean)**2)))
   maxdiffmed <- deg_to_ft*(max(sqrt((df$Y-latmed)**2 + (df$X-lonmed)**2)))
   if (nrow(df)>2) {
@@ -581,12 +591,12 @@ lldiff <- function(df){
     latmean <- mean(df$Y[mask])
     lonmean <- mean(df$X[mask])
     trimdiffmean <- deg_to_ft*(max(sqrt((df$Y[mask]-latmean)**2 + (df$X[mask]-lonmean)**2)))
-    print(paste("-->",maxindex, mask, trimdiffmean))
+    #print(paste("-->",maxindex, mask, trimdiffmean))
   }
   else {trimdiffmean <- maxdiffmean}
   #print(names(df))
   #print(nrow(df))
-  print(paste("maxdiff", maxdiffmean, df$key[1]))
+  #print(paste("maxdiff", maxdiffmean, df$key[1]))
   dfut <- data.frame(latmean, lonmean, latmed, lonmed, trimdiffmean, maxdiffmean, maxdiffmed, nrow(df))
   colnames(dfut) <- c("LatMean","LonMean",
                     "LatMed", "LonMed", "TrimDiffMean",
@@ -616,6 +626,8 @@ BadDups <- Map_dups %>%
 #    test taking the nearest points for 3 or more dups and recalculate error
 
 
+#   Save for easy restart
+saveRDS(DF_work, paste(path, "In_Progress"))
 
 ```
 
@@ -697,6 +709,8 @@ DF_dups %>% arrange(groupaddress) %>%
 #DF_work <- bind_rows(DF_Unique, Duptest) %>% select(-key)
 DF_work <- bind_rows(DF_Unique, Duptest)
 
+#   Save for easy restart
+saveRDS(DF_work, paste(path, "In_Progress"))
 ```
 
 ## Fix me records
@@ -718,6 +732,9 @@ DF_work %>%
 #   Fix PITA NA in type field
 
 DF_work$STREET_TYPE[is.na(DF_work$STREET_TYPE)] <- ""
+
+#   Save for easy restart
+saveRDS(DF_work, paste(path, "In_Progress"))
 ```
 
 ##  Zipcode
@@ -727,15 +744,51 @@ will play havoc with the rest of the cleanup, so let's go after those now.
 
 ```{r clean zip}
 
+Zipcodes <- readRDS("~/Dropbox/CrimeStats/ZipCodes.rds")
 
+#   Prep intersect file
+
+dat <- data.frame(Longitude=DF_work$X, Latitude=DF_work$Y, Address=DF_work$groupaddress, stringsAsFactors = FALSE)
+
+dat <- st_as_sf(dat, coords=c("Longitude", "Latitude"), crs=4326, agr = "identity")
+
+#   find points in polygons
+#   since zipcodes don't overlap, let's just grab the array index
+#   instead of creating a huge matrix
+a <- st_intersects(dat, Zipcodes, sparse = TRUE)
+
+#   Look for points missing a zipcode
+dat[lengths(a)==0,]
+
+#   Flag those points for later work
+
+mask <- lengths(a)>0
+#a[lengths(a)==0] = 1
+
+#   Append the ZIP field to the data frame
+DF_work$NewZip[mask] <- Zipcodes$Zip_Code[unlist(a)]
+
+#   Look at all zipcode disagreements
+
+ziperror <- DF_work %>% filter(ZIPCODE!=NewZip)
+
+#   How far from being correct?
 
 
 
 ```
 
+## zipcode
 
+A few points don't intersect the zipcode map. For some of these the 
+coordinates are off enough that the point lives in Clear Lake, not
+in a zipcode polygon.
 
-Intersect points with zipcode map to look for errors in the zip code.
+About 2.5% of  points have an apparent wrong zipcode. Some have an
+obviously mis-typed zipcode. Some have a coordinate that is off just
+enough to push them across the boundary. So let's look at how close
+to the correct zip they are.
+
 
 
 Now what to do about streets that have a mix of "FIX ME" and other records?

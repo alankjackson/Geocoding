@@ -1,0 +1,86 @@
+---
+title: "Zipcodes"
+author: "Alan Jackson"
+date: "1/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+options(stringsAsFactors = FALSE)
+library(dplyr)
+require(rgdal)
+library(sf)
+
+googlecrs <- 4326
+
+path <- "/home/ajackson/Rprojects/Geocoding"
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##  Read in COH file
+
+File downloaded from city of Houston
+https://cohgis-mycity.opendata.arcgis.com/datasets/coh-zipcode
+
+Hopefully higher quality than the Houston-Galveston Council data.
+
+Nope. Polygons actually overlap, in many places.
+
+```{r read file}
+
+fname <- paste0(path,"/Zipcodes/COH_ZIPCODE.shp")
+
+zip <- st_read(fname)
+
+#Reading layer `COH_ZIPCODE' from data source `/home/ajackson/~/projects/Geocoding/Zipcodes/COH_ZIPCODE.shp' using driver `ESRI Shapefile'
+#Simple feature collection with 213 features and 12 fields
+#geometry type:  MULTIPOLYGON
+#dimension:      XY
+#bbox:           xmin: -96.4575 ymin: 28.85938 xmax: -94.35424 ymax: 30.6692
+#epsg (SRID):    4326
+#proj4string:    +proj=longlat +datum=WGS84 +no_defs
+
+# View the feature class
+plot(zip)
+
+# Drop unneeded stuff
+
+zip <- zip %>% 
+  select(-c(CREATION_U, DATE_CREAT, DATE_MODIF, DATE_POSTE, LAST_USER, SYS_ID, GlobalID))
+
+# Check
+
+z <- st_make_valid(zip)
+
+inter <- st_intersection(z) %>% filter(n.overlaps > 1)
+plot(inter %>% select(ZIP_CODE))
+
+# Save
+
+saveRDS(zip, paste0(path, "/Zipcode_Polygons.rds"))
+
+```
+
+##   Let's try census bureau file
+
+https://www.census.gov/programs-surveys/geography/guidance/geo-areas/zctas.html
+
+```{r census zcta file}
+
+fname <- paste0(path,"/Zipcodes/cb_2018_us_zcta510_500k.shp")
+
+zip <- st_read(fname)
+
+# Reading layer `cb_2018_us_zcta510_500k' from data source `/home/ajackson/~/projects/Geocoding/Zipcodes/cb_2018_us_zcta510_500k.shp' using driver `ESRI Shapefile'
+# Simple feature collection with 33144 features and 5 fields
+# geometry type:  MULTIPOLYGON
+# dimension:      XY
+# bbox:           xmin: -176.6847 ymin: -14.37374 xmax: 145.8304 ymax: 71.34122
+# epsg (SRID):    4269
+# proj4string:    +proj=longlat +datum=NAD83 +no_defs
+
+
+```
+

@@ -67,6 +67,12 @@ saveRDS(zip, paste0(path, "/Zipcode_Polygons.rds"))
 
 https://www.census.gov/programs-surveys/geography/guidance/geo-areas/zctas.html
 
+Hmmm... a couple of issues. This file is for the entire country, and
+does not (so far I can see) contain state or county codes, to allow me
+to easily subset it.
+Additionally, it is ZCTA polygons, not Zipcode polygons, so it will
+give the wrong zipcode sometimes.
+
 ```{r census zcta file}
 
 fname <- paste0(path,"/Zipcodes/cb_2018_us_zcta510_500k.shp")
@@ -81,6 +87,131 @@ zip <- st_read(fname)
 # epsg (SRID):    4269
 # proj4string:    +proj=longlat +datum=NAD83 +no_defs
 
+plot(zip)
+
+```
+
+##  Found a newer? file called zipcode-generalized.zip from COH
+
+Not good, full of overlaps
+
+```{r generalized zipcodes}
+
+fname <- paste0(path,"/Zipcodes/ZIPCODE_GENERALIZED.shp")
+
+zip <- st_read(fname)
+
+# Reading layer `ZIPCODE_GENERALIZED' from data source `/home/ajackson/~/projects/Geocoding/Zipcodes/ZIPCODE_GENERALIZED.shp' using driver `ESRI Shapefile'
+# Simple feature collection with 185 features and 10 fields
+# geometry type:  POLYGON
+# dimension:      XY
+# bbox:           xmin: 2856133 ymin: 13644660 xmax: 3320975 ymax: 14138760
+# epsg (SRID):    NA
+# proj4string:    +proj=lcc +lat_1=28.38333333333333 +lat_2=30.28333333333334 +lat_0=27.83333333333333 +lon_0=-99 +x_0=600000 +y_0=3999999.999999999 +datum=NAD83 +units=us-ft +no_defs
+
+# View the feature class
+plot(zip)
+
+# Drop unneeded stuff
+
+zip <- zip %>% 
+  select(-c(CREATION_U, DATE_CREAT, DATE_MODIF, DATE_POSTE, LAST_USER, SYS_ID, GlobalID))
+
+# Check
+
+z <- st_make_valid(zip)
+
+inter <- st_intersection(z) %>% filter(n.overlaps > 1)
+plot(inter %>% select(ZCTA))
+
+
+
+```
+
+## Another census tiger file - does it have zipcodes?
+
+Nope, ZCTA's
+
+```{r census tiger}
+
+fname <- paste0(path,"/Zipcodes/tl_2018_48201_faces.shp")
+
+zip <- st_read(fname)
+
+# Reading layer `ZIPCODE_GENERALIZED' from data source `/home/ajackson/~/projects/Geocoding/Zipcodes/ZIPCODE_GENERALIZED.shp' using driver `ESRI Shapefile'
+# Simple feature collection with 185 features and 10 fields
+# geometry type:  POLYGON
+# dimension:      XY
+# bbox:           xmin: 2856133 ymin: 13644660 xmax: 3320975 ymax: 14138760
+# epsg (SRID):    NA
+# proj4string:    +proj=lcc +lat_1=28.38333333333333 +lat_2=30.28333333333334 +lat_0=27.83333333333333 +lon_0=-99 +x_0=600000 +y_0=3999999.999999999 +datum=NAD83 +units=us-ft +no_defs
+
+# View the feature class
+plot(zip)
+
+# Drop unneeded stuff
+
+zip <- zip %>% 
+  select(-c(CREATION_U, DATE_CREAT, DATE_MODIF, DATE_POSTE, LAST_USER, SYS_ID, GlobalID))
+
+# Check
+
+z <- st_make_valid(zip)
+
+inter <- st_intersection(z) %>% filter(n.overlaps > 1)
+plot(inter %>% select(ZCTA))
+
+
+
+
+```
+
+##  ESRI has a Layer Package file that may work
+
+This looks like we have a winner. All I need do is figure out how to 
+limit it to the Houston area.
+
+```{r layer package}
+
+fgdb <- "/home/ajackson/Rprojects/Geocoding/Zipcodes/esridata/v10/zip_poly.gdb"
+
+# Read the feature class
+zipdata2 <- st_read(fgdb) %>% filter(STATE=="TX")
+
+# Reading layer `zip_poly' from data source `/home/ajackson/~/projects/Geocoding/Zipcodes/esridata/v10/zip_poly.gdb' using driver `OpenFileGDB'
+# Simple feature collection with 30924 features and 8 fields
+# geometry type:  MULTIPOLYGON
+# dimension:      XY
+# bbox:           xmin: -179.1473 ymin: 13.23419 xmax: 179.7785 ymax: 71.39048
+# epsg (SRID):    4326
+# proj4string:    +proj=longlat +datum=WGS84 +no_defs
+# View the feature class
+
+plot(zipdata2)
+
+#   Big polygon to grab Houston area
+Houston <- st_make_grid(z, cellsize = c(diff(st_bbox(z)[c(1, 3)]),
+                                        diff(st_bbox(z)[c(2, 4)])),
+                           offset = st_bbox(z)[c("xmin", "ymin")],
+                           n = 1, crs = st_crs(z),
+                           what = "polygons", square = TRUE)
+
+Houston <- st_bbox(z) %>% t_make_grid()
+
+#   Instead lets use the list of zips in COH file to filter out the
+#   desired zips in the state file.
+
+HoustonCodes <- append(as.character(z$ZIP_CODE),c("77316",
+                                                  "77318",
+                                                  "77328"))
+  
+zips <-  zipdata2 %>% 
+  filter(ZIP_CODE %in% HoustonCodes) %>% 
+  select(-c(PO_NAME, STATE, POPULATION, POP_SQMI, SQMI))
+
+plot(zips)
+
+saveRDS(zips, paste0(path, "/Zipcode_Polygons.rds"))
 
 ```
 

@@ -744,7 +744,15 @@ will play havoc with the rest of the cleanup, so let's go after those now.
 
 ```{r clean zip}
 
-Zipcodes <- readRDS("~/Dropbox/CrimeStats/ZipCodes.rds")
+#Zipcodes <- readRDS("~/Dropbox/CrimeStats/ZipCodes.rds")
+Zipcodes <- readRDS("~/Rprojects/Geocoding/Zipcode_Polygons.rds")
+
+# File has overlaps. How bad is it Johnny?
+
+z <- st_make_valid(Zipcodes)
+
+inter <- st_intersection(z) %>% filter(n.overlaps > 1)
+plot(inter %>% select(ZIP_CODE))
 
 #   Prep intersect file
 
@@ -755,7 +763,8 @@ dat <- st_as_sf(dat, coords=c("Longitude", "Latitude"), crs=4326, agr = "identit
 #   find points in polygons
 #   since zipcodes don't overlap, let's just grab the array index
 #   instead of creating a huge matrix
-a <- st_intersects(dat, Zipcodes, sparse = TRUE)
+#a <- st_intersects(dat, Zipcodes, sparse = TRUE)
+a <- st_intersects(dat, z, sparse = TRUE)
 
 #   Look for points missing a zipcode
 dat[lengths(a)==0,]
@@ -763,10 +772,14 @@ dat[lengths(a)==0,]
 #   Flag those points for later work
 
 mask <- lengths(a)>0
+sum(mask)
 #a[lengths(a)==0] = 1
+length(unlist(a)) # should be same length as mask
 
 #   Append the ZIP field to the data frame
-DF_work$NewZip[mask] <- Zipcodes$Zip_Code[unlist(a)]
+#DF_work$NewZip[mask] <- Zipcodes$Zip_Code[unlist(a)]
+#DF_work$NewZip[mask] <- Zipcodes$ZIP_CODE[unlist(a)]
+DF_work$NewZip[mask] <- z$ZIP_CODE[unlist(a)]
 
 #   Look at all zipcode disagreements
 
@@ -774,6 +787,25 @@ ziperror <- DF_work %>% filter(ZIPCODE!=NewZip)
 
 #   How far from being correct?
 
+# Loop through zipcode file, and for each zipcode calc distance to
+# points that are supposed to live in it
+ziperror_sf <- st_as_sf(ziperror, coords=c("X", "Y"), crs=4326, agr = "identity")
+
+for (zip in Zipcodes$ZIP_CODE){
+  print(zip)
+  mask <- ziperror_sf$ZIPCODE==zip
+  if(sum(mask)>0) {
+   ziperror$zipdistance[mask] <- 
+     st_distance(ziperror_sf[mask,], Zipcodes[Zipcodes$ZIP_CODE==zip,])
+  }
+}
+
+#   Let's plot a histogram of distances
+ziperror %>% filter(!is.na(zipdistance)) %>% 
+  filter(zipdistance<1000) %>% # drop distances greater than 1 km
+  ggplot() +
+  geom_histogram(aes(x = zipdistance), fill = "red")
+  
 
 
 ```
@@ -789,6 +821,92 @@ obviously mis-typed zipcode. Some have a coordinate that is off just
 enough to push them across the boundary. So let's look at how close
 to the correct zip they are.
 
+Zipcode 77387 has an undefined distance from addresses, because it has no spatial location. It is used for PO Boxes only. So for the distance = NA, we will replace the zip with the calculated value.
+
+Not happy with my zipcode polygons. They seem to be of not high quality. Let's try to do better. ESRI polygons win, but they are not perfect. For addresses "close" to the ESRI zipcode, we will use the
+COH zipcode. But what is close? 
+
+6919 YELLOWSTONE WAY DRIVE is off by 100 feet, but according to the Post Office, the COH zipcode is correct. The mapped zipcode boundary is simply wrong.
+
+2424 FALCON PASS DRIVE is off by 200 feet, and is in fact incorrect.
+
+I could look at streets of the same name to decide if the zip is wrong.
+
+For that, let's assume that streets with more than 100 addresses, of which less than 2.5% have disagreements in the zip, and where the good zips are only one (to avoid streets where the street crosses two zipcodes), should have the ESRI zip.
+
+
+
+```{r repair zips}
+
+###########   Zips with NA for distance
+
+#   Replace zip with ESRI zip
+
+#   Make a list of OBJECTID's with NA distance and use to update DF_work
+
+foo <- DF_work
+BadZips <- ziperror %>% filter(is.na(zipdistance)) %>% 
+  select(OBJECTID)
+#   Update bad records
+mask <- DF_work$OBJECTID %in% BadZips$OBJECTID
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+############   Zips with a crowdsource
+
+#  If there are many more addresses with a good zip, and few with a #  bad zip, change the bad ones
+foo <- DF_work
+
+DF_work <- DF_work %>% 
+  unite(FullStreet, PREFIX, STREET_NAME, SUFFIX, STREET_TYPE, CITY,
+        sep=" ", na.rm=TRUE, remove=FALSE)
+
+eraseme <- 
+DF_work %>% group_by(FullStreet) %>% 
+  mutate(NumGood=sum(ZIPCODE==NewZip), 
+         Num=n(), 
+         pct=NumGood/Num,
+         uniq=n_distinct(NewZip)) %>% 
+  ungroup() %>% 
+  filter(Num>NumGood, uniq==1, NumGood>100, pct>0.9)
+
+eraseme %>% 
+  ggplot()+
+  geom_histogram(aes(x=pct), bins=40)
+
+#   Seems safe to use cutoffs of pct>0.975 and NumGood>100 with only
+#   one unique NewZip
+
+DF_work %>% group_by(FullStreet) %>% 
+  mutate(NumGood=sum(ZIPCODE==NewZip), 
+         Num=n(), 
+         pct=NumGood/Num,
+         uniq=n_distinct(NewZip)) %>% 
+  ungroup() -> DF_work
+
+mask <- DF_work$Num > DF_work$NumGood &
+        DF_work$uniq == 1 &
+        DF_work$NumGood > 100 &
+        DF_work$pct > 0.975
+
+sum(mask)
+
+#  Apply the filter
+DF_work$ZIPCODE[mask] <- DF_work$NewZip[mask]
+
+###   These are the remaining records
+eraseme <- 
+DF_work %>% group_by(FullStreet) %>% 
+   mutate(NumGood=sum(ZIPCODE==NewZip), 
+         Num=n(), 
+         pct=NumGood/Num,
+         uniq=n_distinct(NewZip)) %>% 
+  ungroup() %>%  
+  filter(Num>NumGood, uniq==1, NumGood>100, pct>0.9)
+
+###   Recalculate distance and put it in DF_work. Then
+#     look for crowdsource with big distance
+```
 
 
 Now what to do about streets that have a mix of "FIX ME" and other records?

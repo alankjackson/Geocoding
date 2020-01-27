@@ -834,6 +834,9 @@ I could look at streets of the same name to decide if the zip is wrong.
 
 For that, let's assume that streets with more than 100 addresses, of which less than 2.5% have disagreements in the zip, and where the good zips are only one (to avoid streets where the street crosses two zipcodes), should have the ESRI zip.
 
+Now let's replace zip's with greater than 5000 meters of error. That's another 4500 records.
+
+
 
 
 ```{r repair zips}
@@ -904,8 +907,135 @@ DF_work %>% group_by(FullStreet) %>%
   ungroup() %>%  
   filter(Num>NumGood, uniq==1, NumGood>100, pct>0.9)
 
-###   Recalculate distance and put it in DF_work. Then
+foo <- DF_work
+##############   Recalculate distance 
 #     look for crowdsource with big distance
+
+ziperror <- DF_work %>% filter(ZIPCODE!=NewZip)
+
+ziperror_sf <- st_as_sf(ziperror, coords=c("X", "Y"), crs=4326, agr = "identity")
+
+for (zip in Zipcodes$ZIP_CODE){
+  print(zip)
+  mask <- ziperror_sf$ZIPCODE==zip
+  if(sum(mask)>0) {
+   ziperror$zipdistance[mask] <- 
+     st_distance(ziperror_sf[mask,], Zipcodes[Zipcodes$ZIP_CODE==zip,])
+  }
+}
+
+#   Seems obvious that *all* the zips with an error greater than
+#   5000 meters should just be replaced with the ESRI zip. So let's
+#   do that.
+
+BadZips <- ziperror %>% filter(zipdistance>=5000) %>% 
+  select(OBJECTID)
+#   Update bad records
+mask <- DF_work$OBJECTID %in% BadZips$OBJECTID
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+
+saveRDS(DF_work, paste(path, "In_Progress"))
+foo <- DF_work
+
+##############   Recalculate distance 
+####   Let's tighten it a little.
+####   distance > 500 m, pct>0.9, NumGood>100
+
+ziperror <- DF_work %>% filter(ZIPCODE!=NewZip)
+
+ziperror_sf <- st_as_sf(ziperror, coords=c("X", "Y"), crs=4326, agr = "identity")
+
+for (zip in Zipcodes$ZIP_CODE){
+  print(zip)
+  mask <- ziperror_sf$ZIPCODE==zip
+  if(sum(mask)>0) {
+   ziperror$zipdistance[mask] <- 
+     st_distance(ziperror_sf[mask,], Zipcodes[Zipcodes$ZIP_CODE==zip,])
+  }
+}
+
+BadZips <- ziperror %>% 
+  filter(zipdistance>500, NumGood>100, pct>0.9) %>% 
+  select(OBJECTID)
+#   Update bad records
+mask <- DF_work$OBJECTID %in% BadZips$OBJECTID
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+foo <- DF_work
+
+############  Now let's look at the low end of distance
+
+ziperror <- DF_work %>% filter(ZIPCODE!=NewZip)
+
+ziperror_sf <- st_as_sf(ziperror, coords=c("X", "Y"), crs=4326, agr = "identity")
+
+for (zip in Zipcodes$ZIP_CODE){
+  print(zip)
+  mask <- ziperror_sf$ZIPCODE==zip
+  if(sum(mask)>0) {
+   ziperror$zipdistance[mask] <- 
+     st_distance(ziperror_sf[mask,], Zipcodes[Zipcodes$ZIP_CODE==zip,])
+  }
+}
+
+###ziperror <- ziperror %>% filter(zipdistance<100)
+
+#   Let's look at the frequency of error by zip    
+
+ziperror %>% ggplot() +
+  geom_histogram(aes(x=ZIPCODE), stat="count")
+
+#   Who are the biggies?
+
+ziperror %>% group_by(ZIPCODE) %>% 
+  mutate(Numerr=n()) %>% 
+  ungroup() %>% 
+  filter(Numerr>500) -> eraseme
+
+#  77375 has 3374 possibly in error. Let's fix all of them
+
+mask <- DF_work$OBJECTID %in% eraseme$OBJECTID[eraseme$ZIPCODE=="77375"]
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+#  77429 has 2508 possibly in error. Let's fix all of them with dist>100
+
+mask <- DF_work$OBJECTID %in% eraseme$OBJECTID[eraseme$ZIPCODE=="77429" &
+                 eraseme$zipdistance>100]
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+#  77449 has 1192 possibly in error. Let's fix all of them with dist>250
+
+mask <- DF_work$OBJECTID %in% eraseme$OBJECTID[eraseme$ZIPCODE=="77449" &
+                 eraseme$zipdistance>250]
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+#  77045 has 854 possibly in error. Let's fix all of them with dist>100
+
+mask <- DF_work$OBJECTID %in% eraseme$OBJECTID[eraseme$ZIPCODE=="77045" &
+                 eraseme$zipdistance>100]
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+#  77381 has 533 possibly in error. Let's fix all of them 
+
+mask <- DF_work$OBJECTID %in% eraseme$OBJECTID[eraseme$ZIPCODE=="77381"]
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+#  77598 has 531 possibly in error. Let's fix all of them 
+
+mask <- DF_work$OBJECTID %in% eraseme$OBJECTID[eraseme$ZIPCODE=="77598"]
+sum(mask)
+DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
+
+
+###########   stoppped here
 ```
 
 

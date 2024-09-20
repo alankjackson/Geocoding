@@ -1034,6 +1034,9 @@ mask <- DF_work$OBJECTID %in% eraseme$OBJECTID[eraseme$ZIPCODE=="77598"]
 sum(mask)
 DF_work[mask,]$ZIPCODE <- DF_work[mask,]$NewZip
 
+# 77054 ESRI map in error, distances useless here.
+
+# It's about time to start geocoding with Google to compare
 
 ###########   stoppped here
 ```

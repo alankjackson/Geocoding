@@ -1,0 +1,23 @@
+---
+title: "Harris county points"
+author: "Alan Jackson"
+format: html
+---
+
+##        Harris county
+
+https://data.geographic.texas.gov/collection/?c=6d9c4a2e-b5bb-49b3-9ceb-0727f4711c5b
+
+Shapefile for address points from state
+
+```{r}
+
+library(tidyverse)
+
+path <- "/home/ajackson/Dropbox/Rprojects/Geocoding/County/"
+
+df <- sf::st_read(paste0(path, "shp/stratmap24-addresspoints_48201_harris_202407.shp"))
+
+
+```
+

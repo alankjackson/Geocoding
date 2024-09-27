@@ -1,0 +1,32 @@
+---
+title: "Read COH gdb file"
+author: "Alan Jackson"
+format: html
+---
+
+##        Location data for addresses
+
+Download from https://mycity.maps.arcgis.com/home/item.html?id=aeb4bb6b3b25471caf4d883bf979424d
+
+accessed via https://cohgis-mycity.opendata.arcgis.com/
+
+```{r}
+
+library(tidyverse)
+
+inpath <- "/home/ajackson/Dropbox/Rprojects/Geocoding/"
+
+
+```
+
+##        Read gdb file
+
+```{r}
+
+layers <- sf::st_layers(paste0(inpath, "SITEADDRESSES_20240808.gdb"))
+
+data <- sf::st_read(paste0(inpath, "SITEADDRESSES_20240808.gdb"), 
+                    layer = "SiteAddresses")
+
+```
+
